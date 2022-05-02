@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <script src="js/aws-cognito-sdk.min.js"></script>
+  <script src="js/amazon-cognito-identity.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/aws-sdk/2.1125.0/aws-sdk.min.js" integrity="sha512-SMJBkbeQeucdzHmmGJt8uUd24I93qluZgBavd29suHkxnxJQRI67OJ7GXo3BvXTgso0a4OLp3wrbrjnKURhJFQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="face-api.js"></script>
+  <script src="js/commons.js"></script>
+  <script src="js/faceDetectionControls.js"></script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/0.100.2/css/materialize.css">
+  <script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+  <div class="content-wrapper" style="display:flex; flex-wrap:wrap;">
+    <div class="progress" id="loader">
+      <div class="indeterminate"></div>
+    </div>
+    <div class="content-inner" style="margin:auto; position:relative;">
+      <video onloadedmetadata="onPlay(this)" id="inputVideo" autoplay muted playsinline width="375" height="812" ></video>
+      <canvas id="overlay" width="375" height="812" />
+    </div>
+    <canvas id="snapshot" style="display:none"></canvas>
+    <div class="recognition-status">
+      <div class="recognition-label">
+        CERCO VOLTI...
+      </div>
+    </div>
+  </div>
+</body>
+
+  <script>
+    anonLog();
+    let forwardTimes = []
+    const context = {
+      locked : false,
+      failed_attempts : 0,
+      _has_mask : false,
+      set has_mask(v){
+        this._hash_mask = v;
+        if(v){
+          $(".recognition-label").css("background-color", "forestgreen");
+          $(".recognition-label").text("✅ MASCHERINA PRESENTE ✅");
+        }else{
+          $(".recognition-label").css("background-color", "crimson");
+          $(".recognition-label").text("⚠️ INDOSSA LA MASCHERINA ⚠️");
+        }
+      },
+      get has_mask(){
+        return this._hash_mask;
+      }
+    };
+
+    function detectFaces(imageData){
+      AWS.region = "eu-central-1";
+      var rekognition = new AWS.Rekognition({apiVersion: '2016-06-27'});
+      var params = {
+        Image: {
+          Bytes: imageData
+        },
+        SummarizationAttributes: {
+          MinConfidence: 80,
+          RequiredEquipmentTypes: [
+            'FACE_COVER'
+          ]
+        }
+      };
+      rekognition.detectProtectiveEquipment(params, function (err, data) {
+        if (err) console.log(err, err.stack);
+        else {
+          const persons = data.Persons.length;
+          const persons_with_mask = data.Summary.PersonsWithRequiredEquipment.length;
+          if(persons == persons_with_mask){
+            context.failed_attempts = 0;
+            context.has_mask = true;
+          }else{
+            context.failed_attempts++;
+            if(context.failed_attempts >= 2){
+              context.has_mask = false;
+            }
+          }
+          setTimeout(() => {
+            context.locked = false;
+          }, 1000)
+        }
+      });
+    }
+
+    function anonLog(){
+      AWS.config.region = 'eu-central-1';
+      AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+        // replace with your IdentityPoolId
+        IdentityPoolId: 'REPLACE_HERE',
+      });
+
+      AWS.config.credentials.get(function(){
+        var accessKeyId = AWS.config.credentials.accessKeyId;
+        var secretAccessKey = AWS.config.credentials.secretAccessKey;
+        var sessionToken = AWS.config.credentials.sessionToken;
+      });
+    }
+
+    function getImageBytes(image){
+      const only_stream = atob(image.split("data:image/png;base64,")[1]);
+      var length = only_stream.length;
+      var imageBytes = new ArrayBuffer(length);
+      var ua = new Uint8Array(imageBytes);
+      for (var i = 0; i < length; i++) {
+        ua[i] = only_stream.charCodeAt(i);
+      }
+      return imageBytes;
+    }
+
+    function checkForMask(){
+      context.locked = true;
+      const image = takePicture();
+      const image_bytes = getImageBytes(image);
+      detectFaces(image_bytes);
+    }
+
+    function takePicture(){
+      const canvas = document.getElementById("snapshot");
+      const video = document.getElementById("inputVideo");
+      canvas.width = $(window).width();
+      canvas.height = $(window).height();
+      canvas.getContext('2d').drawImage(video, 0, 0, $(window).width(),$(window).height());
+      const imageStream = canvas.toDataURL('image/png');
+      return imageStream;
+    }
+
+
+    async function onPlay(){
+      const videoEl = $('#inputVideo').get(0)
+      if(
+        videoEl.paused ||
+        videoEl.ended ||
+        !isFaceDetectionModelLoaded()
+      )
+        return setTimeout(() => onPlay())
+
+      const options = getFaceDetectorOptions()
+      const result = await faceapi.detectSingleFace(videoEl, options)
+
+      if(result){
+        if(!context.locked){
+          // checkForMask();
+        }
+        const canvas = $('#overlay').get(0)
+        const dims = faceapi.matchDimensions(canvas, videoEl, true)
+        faceapi.draw.drawDetections(canvas, faceapi.resizeResults(result, dims))
+        $("#overlay").show(0);
+      }else{
+        $("#overlay").hide(0);
+      }
+      setTimeout(() => onPlay())
+    }
+
+    async function run(){
+      await changeFaceDetector(TINY_FACE_DETECTOR)
+      const stream = await navigator.mediaDevices.getUserMedia({ video: {} })
+      const videoEl = $('#inputVideo').get(0)
+      videoEl.srcObject = stream
+    }
+
+    $(document).ready(function() {
+      run()
+    })
+
+  </script>
+</body>
+</html>
