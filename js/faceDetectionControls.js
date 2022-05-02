@@ -82,7 +82,7 @@ async function changeFaceDetector(detector) {
 
   $('#loader').show()
   if (!isFaceDetectionModelLoaded()) {
-    await getCurrentFaceDetectionNet().load('models/')
+    await getCurrentFaceDetectionNet().load('https://immedia-event.dgcal.it/models/')
   }
 
   $('#loader').hide()
